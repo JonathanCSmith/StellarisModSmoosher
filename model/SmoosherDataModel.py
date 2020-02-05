@@ -155,9 +155,7 @@ class Node(MetadataHolder):
         return self.parent
 
     def is_branch_point(self):
-        # TODO: Return whether or not this node is a branching element or just a trunk
-        exit(1)
-        return
+        return len(self.attributes) + len(self.children) > 1
 
     def __iter__(self):
         return NodeIterator(self)
