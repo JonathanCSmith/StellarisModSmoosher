@@ -118,113 +118,31 @@ class StellarisModSmoosher:
         print("Confilict handling!!!!")
         master_text = self._filesystem.load_file(file)
         master_tree, master_graph = self._parser.parse_text(os.path.basename(file), file, master_text, debug=False)
-        diff = SmoosherComparator.compare(master_graph, graph)
-        conflicts, safe = self._identify_conflicts(file, file_tree, master_tree)
 
+        # identify and generate an indexed difference
+        differ = SmoosherComparator.DataDifferentiator(master_graph, graph)
+        differ.compare()
+
+        # Maybe unnecessary as we have now moved to our own data model
+        #conflicts, safe = self._identify_conflicts(file, file_tree, master_tree)
+        #
         # Resolve our conflicts
-        if len(conflicts) == 0:
-            resolved_conflicts = dict()
-        else:
-            resolved_conflicts = self._resolve_conflicts(conflicts)
-        self._modify_master(file, safe, resolved_conflicts)
+        # if len(conflicts) == 0:
+        #     resolved_conflicts = dict()
+        # else:
+        #     resolved_conflicts = self._resolve_conflicts(conflicts)
+        # self._modify_master(file, safe, resolved_conflicts)
 
-    def _identify_conflicts(self, file, upstart_tree, master_tree):
+        # Go through a conflict resolution process
+        if differ.get_conflict_count() > 0:
+            pass
 
-        # TODO: There are multiple ways of determining conflicts.
-        # First - already implemented is by root key
-        # TODO: Second - by id
-        # TODO: Determine type by file
-
-        # TODO: For now we gonna catch here which ones have multi roots, then we can back determine how to behave
-        for key in upstart_tree:
-            if len(upstart_tree[key]) > 1:
-                print("We need to look into this")
-                exit(1)
-
-        for key in master_tree:
-            if len(master_tree[key]) > 1:
-                print("We need to look into this")
-                exit(1)
-
-        safe = master_tree.copy()
-        conflicts = StellarisDataParser.dict_list()
-        for key in upstart_tree:
-            if key in safe:
-                if upstart_tree[key] == master_tree[key]:
-                    continue
-
-                # Obtain the list of blocks that use this key
-                master_blocks = master_tree[key]
-                upstart_blocks = upstart_tree[key]
-
-                # Check to see if they are different lengths - if so we can safely say they are in conflict
-                if len(master_blocks) != len(upstart_blocks):
-                    continue
-
-                # Loop through each block to compare identity
-                count = len(master_blocks)
-                for upstart_block in upstart_blocks:
-                    if upstart_block in master_blocks:
-                        count -= 1
-
-                # This occurs when there are multiple key entries and they were out of order
-                if count == 0:
-                    continue
-
-                # TODO: we could probably recurse on this
-                # Further, it may be that the contents of each block have been re-arranged
-                count = len(master_blocks)
-                for upstart_block in upstart_blocks:
-                    upstart_block_content = upstart_block["value"]
-                    upstart_block_length = len(upstart_block_content)
-
-                    for master_block in master_blocks:
-                        master_block_content = master_block["value"]
-                        master_block_length = len(master_block_content)
-
-                        # If the length doesn't match here we don't need to compare them
-                        if upstart_block_length != master_block_length:
-                            continue
-
-                        # Check the contents of the block to see if they are disordered
-                        for upstart_item in upstart_block_content:
-                            found = False
-                            for master_item in master_block_content:
-                                if upstart_item == master_item:
-                                    master_block_length -= 1
-                                    found = True
-                                    break
-
-                            # Essentially here our selected block definitely does not match this block, so we need to move on
-                            if not found:
-                                break
-
-                        # It really should be by now
-                        if master_block_length == 0:
-                            count -= 1
-
-                if count == 0:
-                    continue
-
-                # Assign
-                conflicts, master_tree = self._identify_conflict(key, conflicts, master_tree, upstart_tree)
-
-            else:
-                safe[key] = upstart_tree[key]
-
-        return conflicts, safe
-
-    def _identify_conflict(self, key, current_conflicts, master_tree, upstart_tree):
-        if key in current_conflicts:
-            conflict_properties = current_conflicts[key]
-        else:
-            conflict_properties = StellarisDataParser.dict_list()
-            conflict_properties["master"] = master_tree[key]
-
-        conflict_properties["conflicting"] = upstart_tree[key]
-        current_conflicts[key] = conflict_properties
-        master_tree.pop(key)
-        return current_conflicts, master_tree
+            # What we want to do here is display a gui with all diffs that has the following properties:
+            #   [OLD] [NEW] [BUILDER OUTPUT] [CUSTOM] <- they should also be hideable???
+            #       [BUILDER] =
+            #           [INFO]  [A] [B]
+            #           [CURRENT SECTION]
+            #           [EDITABLE RESULT]
 
     def _resolve_conflicts(self, conflicts):
         resolved = StellarisDataParser.dict_list()
@@ -270,6 +188,106 @@ class StellarisModSmoosher:
 
         self._filesystem.remove_file(file)
         self._parser.dump(safe_items, file)
+
+
+
+    # def _identify_conflicts(self, file, upstart_tree, master_tree):
+    #
+    #     # TODO: There are multiple ways of determining conflicts.
+    #     # First - already implemented is by root key
+    #     # TODO: Second - by id
+    #     # TODO: Determine type by file
+    #
+    #     # TODO: For now we gonna catch here which ones have multi roots, then we can back determine how to behave
+    #     for key in upstart_tree:
+    #         if len(upstart_tree[key]) > 1:
+    #             print("We need to look into this")
+    #             exit(1)
+    #
+    #     for key in master_tree:
+    #         if len(master_tree[key]) > 1:
+    #             print("We need to look into this")
+    #             exit(1)
+    #
+    #     safe = master_tree.copy()
+    #     conflicts = StellarisDataParser.dict_list()
+    #     for key in upstart_tree:
+    #         if key in safe:
+    #             if upstart_tree[key] == master_tree[key]:
+    #                 continue
+    #
+    #             # Obtain the list of blocks that use this key
+    #             master_blocks = master_tree[key]
+    #             upstart_blocks = upstart_tree[key]
+    #
+    #             # Check to see if they are different lengths - if so we can safely say they are in conflict
+    #             if len(master_blocks) != len(upstart_blocks):
+    #                 continue
+    #
+    #             # Loop through each block to compare identity
+    #             count = len(master_blocks)
+    #             for upstart_block in upstart_blocks:
+    #                 if upstart_block in master_blocks:
+    #                     count -= 1
+    #
+    #             # This occurs when there are multiple key entries and they were out of order
+    #             if count == 0:
+    #                 continue
+    #
+    #             # TODO: we could probably recurse on this
+    #             # Further, it may be that the contents of each block have been re-arranged
+    #             count = len(master_blocks)
+    #             for upstart_block in upstart_blocks:
+    #                 upstart_block_content = upstart_block["value"]
+    #                 upstart_block_length = len(upstart_block_content)
+    #
+    #                 for master_block in master_blocks:
+    #                     master_block_content = master_block["value"]
+    #                     master_block_length = len(master_block_content)
+    #
+    #                     # If the length doesn't match here we don't need to compare them
+    #                     if upstart_block_length != master_block_length:
+    #                         continue
+    #
+    #                     # Check the contents of the block to see if they are disordered
+    #                     for upstart_item in upstart_block_content:
+    #                         found = False
+    #                         for master_item in master_block_content:
+    #                             if upstart_item == master_item:
+    #                                 master_block_length -= 1
+    #                                 found = True
+    #                                 break
+    #
+    #                         # Essentially here our selected block definitely does not match this block, so we need to move on
+    #                         if not found:
+    #                             break
+    #
+    #                     # It really should be by now
+    #                     if master_block_length == 0:
+    #                         count -= 1
+    #
+    #             if count == 0:
+    #                 continue
+    #
+    #             # Assign
+    #             conflicts, master_tree = self._identify_conflict(key, conflicts, master_tree, upstart_tree)
+    #
+    #         else:
+    #             safe[key] = upstart_tree[key]
+    #
+    #     return conflicts, safe
+    #
+    # def _identify_conflict(self, key, current_conflicts, master_tree, upstart_tree):
+    #     if key in current_conflicts:
+    #         conflict_properties = current_conflicts[key]
+    #     else:
+    #         conflict_properties = StellarisDataParser.dict_list()
+    #         conflict_properties["master"] = master_tree[key]
+    #
+    #     conflict_properties["conflicting"] = upstart_tree[key]
+    #     current_conflicts[key] = conflict_properties
+    #     master_tree.pop(key)
+    #     return current_conflicts, master_tree
 
 
 # Inputs TODO: Improve with argparse

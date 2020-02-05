@@ -68,15 +68,15 @@ class StellarisDataParser(object):
         # Loop through our root statement
         for statement in source:
             if len(statement) == 1:
-                assignment = self._derive_weird_assignment(root_document, statement, fallback_source)
-                parent.add_assignment(assignment)
+                attribute = self._derive_weird_attribute(root_document, statement, fallback_source)
+                parent.add_attribute(attribute)
 
             elif isinstance(statement[2], pp.ParseResults):
                 node = self._derive_node(root_document, statement, fallback_source)
                 parent.add_node(node)
             else:
-                assignment = self._derive_assignment(root_document, statement, fallback_source)
-                parent.add_assignment(assignment)
+                attribute = self._derive_attribute(root_document, statement, fallback_source)
+                parent.add_attribute(attribute)
 
         return parent
 
@@ -100,19 +100,19 @@ class StellarisDataParser(object):
         exit(1)
         return None
 
-    def _derive_assignment(self, root_document, statement, fallback_source):
+    def _derive_attribute(self, root_document, statement, fallback_source):
         if len(statement) != 4:
             source = fallback_source
         else:
             source = statement[3]
-        return SmoosherDataModel.Assignment(root_document, statement[0], statement[1], statement[2], source)
+        return SmoosherDataModel.Attribute(root_document, statement[0], statement[1], statement[2], source)
 
-    def _derive_weird_assignment(self, root_document, statement, fallback_source):
+    def _derive_weird_attribute(self, root_document, statement, fallback_source):
         if len(statement) != 4:
             source = fallback_source
         else:
             source = statement[3]
-        return SmoosherDataModel.StatementAssignment(root_document, statement[0], source)
+        return SmoosherDataModel.ListAttribute(root_document, statement[0], source)
 
     def _pre_process_source(self, src):
         # Remove tags & dependencies which fuck everything up because they are formatted weirdly
@@ -142,7 +142,7 @@ class StellarisDataParser(object):
         value_type = (real | integer | yes | no | pp.dblQuotedString | unquoted)
         value_type.setName("value")
 
-        # Handle our special cased assignments
+        # Handle our special cased attributes
         assignment = (string_type + "=" + value_type)
         assignment.setName("assignment")
 
@@ -326,10 +326,6 @@ class StellarisDataParser(object):
                                                     target_text)
 
         return target_text
-
-        # for conflict in conflict_items:
-        #     for key, item in conflict.items(): # Further nesting allows for duplicate keys
-        #         self._write_block_to_text(key, item["type"], item["value"], item["source"], tab_count, target_text)
 
     def _write_tree_to_text(self, tree, tab_count, target_text):
         for key, value in tree.items():

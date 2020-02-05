@@ -1,70 +1,138 @@
-def compare(master_graph, graph):
-    diff = DiffRecord(master_graph, graph)
-    diff.compare()
-    graph.compare(diff, master_graph)
-    return diff
+class Difference:
+    def __init__(self, type, original, latest):
+        self.type = type
+        self.original = original
+        self.latest = latest
 
 
-class NewDiff:
-    # TODO: Add unique indexing per doc which we can use to reference diff spots
-    # TODO: Centralize information source to provide us with everything we need to index and represent a diff
-    def __init__(self, information_source):
-        self.diff_type = "NEW"
-        self.diff_id = information_source.unique_id
+class Addition(Difference):
+    def __init__(self, latest):
+        super().__init__("addition", None, latest)
 
 
-class DeleteDiff:
-    def __init__(self, information_source):
-        self.diff_type = "DELETE"
-        self.diff_id = information_source.unique_id
+class Deletion(Difference):
+    def __init__(self, original):
+        super().__init__("deletion", original, None)
 
 
-class ChangeDiff:
-    def __init__(self, information_source_1, information_source_2):
-        self.diff_type = "CHANGE"
-        self.source_diff_id = information_source_1.unique_id
-        self.target_diff_id = information_source_2.unique_id
+class Change(Difference):
+    def __init__(self, original, latest):
+        super().__init__("change", original, latest)
 
 
-class DiffRecord:
-    def __init__(self, original_graph, difference_graph):
-        self.original_graph = original_graph
-        self.difference_graph = difference_graph
-        self.diffs = list()
+class DataDifferentiator:
+    def __init__(self, original, latest):
+        self.original = original
+        self.latest = latest
+        self.original_changes = dict()
+        self.latest_changes = dict()
+
+    def get_conflict_count(self):
+        return len(self.original_changes) + len(self.latest_changes)
 
     def compare(self):
-        self._compare_nodes(self.original_graph, self.difference_graph)
+        # Quick and eminently defeatable check to validate if our docs have been pruned ahead of time
+        if not self.original.is_pruned:
+            self.original.prune_children()
 
-    def _compare_nodes(self, original_node, different_node):
-        # Compare assignments
-        for different_assignment in different_node.assignments:
-            original_assignment = original_node.has_comparable_assignment(different_assignment)
-            self._generate_diff_for_assignment(original_assignment, different_assignment)
+        if not self.latest.is_pruned:
+            self.latest.prune_children()
 
-        # We do this in the other direction so we can highlight them as 'deletions'
-        # despite that not necessarily being the case
-        for original_assignment in original_node.assigments:
-            different_assignment = different_node.has_comparable_assignment(original_assignment)
-            if different_assignment is None:
-                self._generate_diff_for_assignment(original_assignment, different_assignment)
+        # Compare our attribute - this is easy as we can use the key for identity
+        original_attributes = self.original.attributes.copy()
+        latest_attributes = self.latest.attributes.copy()
+        while len(original_attributes) > 0:
+            original_attribute = original_attributes.pop()
+            found = False
+            for latest_attribute in latest_attributes:
 
-        # Compare nodes
-        for diff_node in different_node.child_nodes:
-            source_node = original_node.has_comparable_node(diff_node)
-            self._generate_diff_for_node(source_node, diff_node)
+                # Check if the key is the same if so we can either register a change or its the same
+                if original_attribute.key == latest_attribute.key:
+                    if not original_attributes.equals(latest_attribute):
+                        self._register_difference(Change(original_attribute, latest_attribute))
 
-        # As above
-        for source_node in original_node.child_nodes:
-            diff_node = different_node.has_comparable_assignment(source_node)
-            if diff_node is None:
-                self._generate_diff_for_node(source_node, diff_node)
+                    latest_attributes.remove(latest_attribute)  # Safe as we break out of loop
+                    found = True
+                    break
 
-    def _generate_diff_for_assignment(self, original_assignment, different_assignment):
-        if original_assignment is None:
-            self.diffs.append(NewDiff(different_assignment))
+            # If it wasn't found then we need to assign it as a deletion
+            if not found:
+                self._register_difference(Deletion(original_attribute))
 
-        if different_assignment is None:
-            self.diffs.append(DeleteDiff(original_assignment))
+        # Any remaining in latest_attributes are new
+        for latest_attribute in latest_attributes:
+            self._register_difference(Addition(latest_attribute))
 
-        if original_assignment != different_assignment:
-            self.diffs.append(ChangeDiff(original_assignment, different_assignment))
+        # Cheeky assumption: Root node (not doc) == identity of branch. We also assume that key is sufficiently unique -
+        # normally this would not be true, but we special case for situations where it's not Note its only going to
+        # be true for a root node
+        for node in self.original:
+
+            # Lets obtain the leaves
+            # Now evaluate leafs on both (or do this automatically when constructing the tree)
+            original_leaves = node.get_leaves().copy()
+            latest_leaves = node.get_leaves().copy()
+
+            # Work through each of the original leaves until we have none left
+            while len(original_leaves) > 0:
+                original_leaf = original_leaves.pop()
+                found = False
+                potential_matches = list()
+                latest_leaf = None
+
+                # Side by side comparison to latest leaves
+                for latest_leaf in latest_leaves:
+
+                    # Assess whether the leaves are the same - note leaves may not be unique
+                    if original_leaf.key == latest_leaf.key:
+
+                        # In this scenario we can assume identity - it may be a false assumption but its not a bad one
+                        if original_leaf.get_branch_path() == latest_leaf.get_branch_path():
+                            found = True
+
+                        # Otherwise we should store the candidates
+                        potential_matches.append(latest_leaf)
+
+                # This leaf has a one to one match
+                if found:
+
+                    # Evaluate if there is a change to register
+                    if not original_leaf.equals(latest_leaf):
+                        self._register_difference(Change(original_leaf, latest_leaf))
+
+                    latest_leaves.remove()  # Safe as we break out of loop
+
+                # If we have no matches then we can assume its a deletion
+                if len(potential_matches) == 0:
+                    self._register_difference(Deletion(original_leaf))
+
+                # One fuzzy match means we could assume its been moved
+                elif len(potential_matches) == 1:
+                    self._register_difference(Change(original_leaf, latest_leaf))
+                    latest_leaves.remove(latest_leaf)  # Safe as we break out of loop
+
+                # Otherwise we should assume this is a deletion rather than attempting to calculate reassignments
+                self._register_difference(Deletion(original_leaf))
+
+            # All remaining leaves in the latest list can be assigned as additions
+            for leaf in latest_leaves:
+                self._register_difference(Addition(leaf))
+
+    def _register_difference(self, difference):
+        # Store the relevant ids of where the diff is - specifically where the divergence originates in the tree by
+        # calculating the true origin of this diff by recursing up plain trunks until a branch is reached
+        if isinstance(difference, Addition):
+            real_id = difference.latest.compute_branch_point_successor()
+            self.latest_changes[real_id] = difference
+
+        elif isinstance(difference, Deletion):
+            real_id = difference.original.compute_branch_point_successor()
+            self.original_changes[real_id] = difference
+
+        # Note this is not entirely correct as a new branching point could have been added in latest which would mean
+        # not enough is highlighted in latest - but its a minor gripe
+        else:
+            original_real_id = difference.original.compute_branch_point_successor()
+            self.original_changes[original_real_id] = difference
+            latest_real_id = difference.latest.compute_branch_point_successor()
+            self.latest_changes[latest_real_id] = difference
