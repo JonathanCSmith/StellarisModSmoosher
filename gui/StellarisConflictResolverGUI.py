@@ -3,10 +3,20 @@ import tkinter as tk
 from model import SmoosherDataModel, SmoosherComparator
 
 
+class DiffMarker:
+    def __init__(self, original, latest):
+        self.original_caret_position = original
+        self.latest_caret_position = latest
+        self.diff = None
+
+    def assign_diff(self, diff):
+        self.diff = diff
+
+
 class StellarislatestResolver(tk.Frame):
     default_text = "This is the file builder wizard. The wizard will iterate through each difference detected between" \
                    " the two files as highlighted using the blue colour. Manual changes can be made by editing the " \
-                   "document below."
+                   "document below AFTER all of the diffs have been resolved."
 
     def __init__(self, root, geometry, state):
         super().__init__(root)
@@ -20,6 +30,9 @@ class StellarislatestResolver(tk.Frame):
         self.right_source = ""
         self.result_type = ""
         self.result_source = ""
+        self.diff_index = -1
+        self.diff_markers_dict = dict()
+        self.diff_markers = list()
 
         # Remember geometry
         if geometry is not None:
@@ -76,6 +89,7 @@ class StellarislatestResolver(tk.Frame):
         # Custom Text Display
         self.custom_text = tk.Text(self.custom_text_frame, bg="white")
         self.custom_text.grid(row=1, column=1, sticky="nsew")
+        self.custom_text.config(state=tk.DISABLED)
         self.custom_scroll = tk.Scrollbar(self.custom_text_frame, command=self.custom_text.yview)
         self.custom_scroll.grid(row=1, column=2, sticky="nsew")
         self.custom_text_frame.columnconfigure(1, weight=1)
@@ -128,11 +142,17 @@ class StellarislatestResolver(tk.Frame):
         self.result_type = self.left_type
         self.on_exit()
 
+    # TODO: For these, if we have done all of our diffs, we should then allow the user to enter custom text
     def select_original(self):
         pass
 
     def select_latest(self):
         pass
+
+    def _next_diff(self):
+        diff = self.diff_markers[self.diff_index]
+
+        # TODO set the carets based on the diff
 
     def populate(self, original, original_type, original_source, latest, latest_type, latest_source):
         self.original_text.insert(1.0, original)
@@ -144,12 +164,21 @@ class StellarislatestResolver(tk.Frame):
         self.right_source = latest_source
 
     def populate(self, difference):
-        # TODO: Somehow it would be good to store the diffs by line so we can move to them
+        # Populate our text boxes and calculate the diff positions
+        self._populate_from_node(difference.original, self.original_text, difference.original_changes, 0, True)
+        self._populate_from_node(difference.latest, self.latest_text, difference.latest_changes, 0, False)
 
-        self._populate_from_node(difference.original, self.original_text, difference.original_changes, 0)
-        self._populate_from_node(difference.latest, self.latest_text, difference.latest_changes, 0)
+        # TODO: Render common text into custom!
 
-    def _populate_from_node(self, node, destination, difference, tabs):
+        # Put all of our diffs in a list
+        for key, value in self.diff_markers_dict.items():
+            value.assign_diff(key)
+            self.diff_markers.append(value)
+
+        # Set our first diff as the target
+        self.diff_index = 0
+
+    def _populate_from_node(self, node, destination, difference, tabs, is_original):
         # Do the original first
         for metadata_holder in node:
             # This will store the start point of any text we add from now on
@@ -171,7 +200,7 @@ class StellarislatestResolver(tk.Frame):
 
             # Now we need to back highlight
             if marking_diff:
-                end_pos = difference.index("end")
+                end_pos = destination.index("end")
 
                 # If so use cursors to assign a highlight
                 diff = difference[metadata_holder.unique_id]
@@ -183,6 +212,32 @@ class StellarislatestResolver(tk.Frame):
 
                 elif isinstance(diff, SmoosherComparator.Change):
                     destination.tag_add("edit", start_pos, end_pos)
+
+                if diff in self.diff_markers_dict:
+                    if is_original:
+                        diff_marker = self.diff_markers_dict[diff]
+                        if diff_marker.original_caret_position is not None:
+                            print("We have recorded the same diff twice - this is likely a programming issue. Fix Yo Shit")
+                            exit(1)
+
+                        diff_marker.set_original_caret_position(start_pos)
+
+                    else:
+                        diff_marker = self.diff_markers[diff]
+                        if diff_marker.latest_caret_position is not None:
+                            print("We have recorded the same diff twice - this is likely a programming issue. Fix Yo Shit")
+                            exit(1)
+
+                        diff_marker.set_latest_caret_position(start_pos)
+
+                else:
+                    if is_original:
+                        diff_marker = DiffMarker(start_pos, None)
+                    else:
+                        diff_marker = DiffMarker(None, end_pos)
+
+                    self.diff_markers_dict[diff] = diff_marker
+
 
     def on_exit(self):
         self.geometry_values = self.root.geometry()
